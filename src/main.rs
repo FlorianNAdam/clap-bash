@@ -1,5 +1,7 @@
 use clap::{ArgMatches, Command, Parser};
-use serde::Deserialize;
+use clap_serde::CommandWrap;
+use serde::{Deserialize, Deserializer};
+use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::os::unix::process::CommandExt;
@@ -14,18 +16,6 @@ use std::process::Command as ProcCommand;
     about = "A simple clap based arg parser for bash scripts"
 )]
 struct Cli {
-    #[arg(long, conflicts_with = "clap_json_file")]
-    clap_json: Option<String>,
-
-    #[arg(long, value_name = "FILE", conflicts_with = "clap_json")]
-    clap_json_file: Option<PathBuf>,
-
-    #[arg(long, conflicts_with = "run_json_file")]
-    run_json: Option<String>,
-
-    #[arg(long, value_name = "FILE", conflicts_with = "run_json")]
-    run_json_file: Option<PathBuf>,
-
     #[arg(long, conflicts_with = "json_file")]
     json: Option<String>,
 
@@ -36,6 +26,12 @@ struct Cli {
     trailing: Vec<String>,
 }
 
+#[derive(Debug)]
+struct Config {
+    clap_config: Command,
+    command_config: CommandConfig,
+}
+
 #[derive(Debug, Deserialize)]
 struct CommandConfig {
     executable: Option<PathBuf>,
@@ -44,7 +40,7 @@ struct CommandConfig {
     args: Vec<HashMap<String, ArgConfig>>,
 
     #[serde(default)]
-    subcommands: HashMap<String, CommandConfig>,
+    subcommands: Vec<HashMap<String, CommandConfig>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,52 +51,35 @@ struct ArgConfig {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let clap_json_data = if let Some(json) = cli.clap_json {
+    let json_data = if let Some(json) = cli.json {
         json
-    } else if let Some(file) = cli.clap_json_file {
+    } else if let Some(file) = cli.json_file {
         fs::read_to_string(file).expect("Failed to read JSON file")
     } else {
-        eprintln!("You must provide either --clap-json or --clap-json-file");
-        std::process::exit(1);
+        anyhow::bail!("You must provide either --json or --json-file")
     };
 
-    let app: clap::Command = serde_json::from_str::<clap_serde::CommandWrap>(&clap_json_data)
-        .expect("Failed to parse JSON into clap::Command")
-        .into();
+    let config: Config = serde_json::from_str(&json_data)?;
 
-    let run_json_data = if let Some(json) = cli.run_json {
-        json
-    } else if let Some(file) = cli.run_json_file {
-        fs::read_to_string(file).expect("Failed to read JSON file")
-    } else {
-        eprintln!("You must provide either --run-json or --run-json-file");
-        std::process::exit(1);
-    };
-
-    let config: CommandConfig = serde_json::from_str(&run_json_data).expect("Failed to parse JSON");
+    let app = config.clap_config;
+    let command_config = config.command_config;
 
     let mut args = cli.trailing;
     args.insert(0, app.get_name().to_string());
 
     let matches = app.clone().get_matches_from(args);
 
-    run(&app, &matches, &config)
+    run(&app, &matches, &command_config)
 }
 
 fn run(command: &Command, args: &ArgMatches, config: &CommandConfig) -> anyhow::Result<()> {
     if let Some((name, subargs)) = args.subcommand() {
-        let subconfig = config
-            .subcommands
-            .get(name)
-            .expect("Missing subcommand in config");
-
+        let subconfig = get_subcommand_config(config, name);
         let subcommand = get_subcommand(command, name);
 
         run(subcommand, subargs, subconfig)
     } else {
         if let Some(executable) = &config.executable {
-            println!("run root");
-
             let env_vars = create_env_vars(command, args, config);
 
             let error = ProcCommand::new(executable).envs(env_vars).exec();
@@ -116,6 +95,17 @@ fn get_subcommand<'a>(command: &'a Command, name: &str) -> &'a Command {
         .get_subcommands()
         .find(|cmd| cmd.get_name() == name)
         .expect("Missing subcommand")
+}
+
+fn get_subcommand_config<'a>(config: &'a CommandConfig, name: &str) -> &'a CommandConfig {
+    for subcommand in config.subcommands.iter() {
+        for (subcommand_name, config) in subcommand.iter() {
+            if subcommand_name == name {
+                return config;
+            }
+        }
+    }
+    todo!()
 }
 
 fn get_arg_config<'a>(config: &'a CommandConfig, name: &str) -> &'a ArgConfig {
@@ -176,4 +166,89 @@ fn to_env_var_name(input: &str) -> String {
         })
         .map(|c| c.to_ascii_uppercase())
         .collect()
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut full_json = Value::deserialize(deserializer)?;
+        let runtime_json = extract_runtime(&mut full_json);
+
+        let clap_config =
+            serde_json::to_string_pretty(&full_json).map_err(serde::de::Error::custom)?;
+        let clap_config: CommandWrap = serde_json::from_str(&clap_config).unwrap();
+
+        let command_config: CommandConfig =
+            serde_json::from_value(runtime_json).map_err(serde::de::Error::custom)?;
+
+        Ok(Config {
+            clap_config: clap_config.into(),
+            command_config,
+        })
+    }
+}
+
+fn extract_runtime(v: &mut Value) -> Value {
+    match v {
+        Value::Object(map) => {
+            let mut runtime_map = serde_json::Map::new();
+
+            for key in ["executable", "env_var"] {
+                if let Some(val) = map.remove(key) {
+                    runtime_map.insert(key.to_string(), val);
+                }
+            }
+
+            if let Some(Value::Array(args)) = map.get_mut("args") {
+                let runtime_args: Vec<Value> = args
+                    .iter_mut()
+                    .map(|arg| match arg {
+                        Value::Object(object) => {
+                            let (name, value) = object.iter_mut().next().unwrap();
+                            let value = extract_runtime(value);
+                            let mut map = Map::new();
+                            map.insert(name.to_string(), value);
+                            Value::Object(map)
+                        }
+                        _ => todo!(),
+                    })
+                    .collect();
+                if !runtime_args.is_empty() {
+                    runtime_map.insert("args".to_string(), Value::Array(runtime_args));
+                }
+            }
+
+            if let Some(subs) = map.get_mut("subcommands") {
+                match subs {
+                    Value::Array(arr) => {
+                        let runtime_subs: Vec<Value> = arr
+                            .iter_mut()
+                            .map(|sub| match sub {
+                                Value::Object(object) => {
+                                    let (name, value) = object.iter_mut().next().unwrap();
+                                    let value = extract_runtime(value);
+                                    let mut map = Map::new();
+                                    map.insert(name.to_string(), value);
+                                    Value::Object(map)
+                                }
+                                _ => todo!(),
+                            })
+                            .collect();
+                        runtime_map.insert("subcommands".to_string(), Value::Array(runtime_subs));
+                    }
+                    _ => {
+                        todo!()
+                    }
+                }
+            }
+
+            Value::Object(runtime_map)
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.iter_mut().map(|item| extract_runtime(item)).collect())
+        }
+        _ => Value::Null,
+    }
 }
