@@ -25,6 +25,8 @@
           inherit system;
         };
 
+        lib = nixpkgs.lib;
+
         naersk-lib = pkgs.callPackage naersk { };
 
         clap-bash = naersk-lib.buildPackage {
@@ -57,6 +59,19 @@
             rust-analyzer
           ];
         };
+
+      }
+      // rec {
+        writeClapBash =
+          writer: filename: config:
+          writer filename ''
+            ${clap-bash}/bin/clap-bash \
+                --json ${lib.escapeShellArg (builtins.toJSON config)} \
+                -- "$@"
+          '';
+
+        writeClapScript = writeClapBash pkgs.writeShellScript;
+        writeClapScriptBin = writeClapBash pkgs.writeShellScriptBin;
       }
     );
 }
