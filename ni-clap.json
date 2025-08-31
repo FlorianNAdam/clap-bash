@@ -1,0 +1,26 @@
+{
+  "name": "ni",
+  "about": "A small nix convenience wrapper",
+  "subcommand_required": true,
+  "args": [],
+  "subcommands": [
+    {
+      "rebuild": {
+        "about": "Rebuilds the Nix environment",
+        "args": [
+          {
+            "label": {
+              "short": "l",
+              "long": "label"
+            }
+          },
+          {
+            "message": {
+              "required": true
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

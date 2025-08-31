@@ -27,7 +27,7 @@
 
         naersk-lib = pkgs.callPackage naersk { };
 
-        mirage = naersk-lib.buildPackage {
+        clap-bash = naersk-lib.buildPackage {
           src = ./.;
           buildInputs = with pkgs; [
             pkg-config
@@ -37,16 +37,16 @@
       in
       {
         packages = {
-          inherit mirage;
+          inherit clap-bash;
         };
 
-        defaultPackage = self.packages.${system}.mirage;
+        defaultPackage = self.packages.${system}.clap-bash;
 
         devShell = pkgs.mkShell {
           buildInputs = with pkgs; [
             cargo
             rustc
-            fuse3
+
           ];
 
           nativeBuildInputs = with pkgs; [
