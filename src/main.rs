@@ -69,20 +69,26 @@ fn main() -> anyhow::Result<()> {
 
     let matches = app.clone().get_matches_from(args);
 
-    run(&app, &matches, &command_config)
+    run(&app, &matches, &command_config, BTreeMap::new())
 }
 
-fn run(command: &Command, args: &ArgMatches, config: &CommandConfig) -> anyhow::Result<()> {
+fn run(
+    command: &Command,
+    args: &ArgMatches,
+    config: &CommandConfig,
+    mut env: BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    let env_vars = create_env_vars(command, args, config);
+    env.extend(env_vars);
+
     if let Some((name, subargs)) = args.subcommand() {
         let subconfig = get_subcommand_config(config, name);
         let subcommand = get_subcommand(command, name);
 
-        run(subcommand, subargs, subconfig)
+        run(subcommand, subargs, subconfig, env)
     } else {
         if let Some(executable) = &config.executable {
-            let env_vars = create_env_vars(command, args, config);
-
-            let error = ProcCommand::new(executable).envs(env_vars).exec();
+            let error = ProcCommand::new(executable).envs(env).exec();
             Err(error.into())
         } else {
             anyhow::bail!("Missing executable")
