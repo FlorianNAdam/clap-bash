@@ -61,17 +61,19 @@
         };
 
       }
-      // rec {
-        writeClapBash =
-          writer: filename: config:
-          writer filename ''
-            ${clap-bash}/bin/clap-bash \
-                --json ${lib.escapeShellArg (builtins.toJSON config)} \
-                -- "$@"
-          '';
+      // {
+        util = rec {
+          writeClapBash =
+            writer: filename: config:
+            writer filename ''
+              ${clap-bash}/bin/clap-bash \
+                  --json ${lib.escapeShellArg (builtins.toJSON config)} \
+                  -- "$@"
+            '';
 
-        writeClapScript = writeClapBash pkgs.writeShellScript;
-        writeClapScriptBin = writeClapBash pkgs.writeShellScriptBin;
+          writeClapScript = writeClapBash pkgs.writeShellScript;
+          writeClapScriptBin = writeClapBash pkgs.writeShellScriptBin;
+        };
       }
     );
 }
