@@ -1,5 +1,4 @@
 use clap::{ArgMatches, Command, Parser};
-use clap_serde::CommandWrap;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -27,16 +26,14 @@ struct Cli {
     #[arg(long, value_name = "FILE", conflicts_with = "run_json")]
     run_json_file: Option<PathBuf>,
 
+    #[arg(long, conflicts_with = "json_file")]
+    json: Option<String>,
+
+    #[arg(long, value_name = "FILE", conflicts_with = "json")]
+    json_file: Option<PathBuf>,
+
     #[arg(last = true, help = "Arguments passed to the main command")]
     trailing: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Config {
-    #[serde(flatten)]
-    clap_config: CommandWrap,
-    #[serde(flatten)]
-    command_config: CommandConfig,
 }
 
 #[derive(Debug, Deserialize)]
