@@ -67,6 +67,7 @@
             writer: filename: config:
             writer filename ''
               ${clap-bash}/bin/clap-bash \
+                  --add-self-to-env \
                   --json ${lib.escapeShellArg (builtins.toJSON config)} \
                   -- "$@"
             '';

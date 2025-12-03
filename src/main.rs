@@ -22,6 +22,9 @@ struct Cli {
     #[arg(long, value_name = "FILE", conflicts_with = "json")]
     json_file: Option<PathBuf>,
 
+    #[arg(long)]
+    add_self_to_env: bool,
+
     #[arg(last = true, help = "Arguments passed to the main command")]
     trailing: Vec<String>,
 }
@@ -65,11 +68,21 @@ fn main() -> anyhow::Result<()> {
     let command_config = config.command_config;
 
     let mut args = cli.trailing;
-    args.insert(0, app.get_name().to_string());
+    let app_name = app.get_name();
+    args.insert(0, app_name.to_string());
 
     let matches = app.clone().get_matches_from(args);
+    let mut env = BTreeMap::new();
 
-    run(&app, &matches, &command_config, BTreeMap::new())
+    if cli.add_self_to_env {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_str) = exe.to_str() {
+                env.insert(app_name.to_string(), exe_str.to_string());
+            }
+        };
+    };
+
+    run(&app, &matches, &command_config, env)
 }
 
 fn run(
