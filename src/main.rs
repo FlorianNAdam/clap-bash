@@ -46,9 +46,45 @@ struct CommandConfig {
     subcommands: Vec<HashMap<String, CommandConfig>>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct EnvVarConfig {
+    name: String,
+    #[serde(default = "default_value_delimiter")]
+    value_delimiter: String,
+    #[serde(default = "default_occurrence_delimiter")]
+    occurrence_delimiter: String,
+}
+
+fn default_value_delimiter() -> String {
+    ";".to_string()
+}
+fn default_occurrence_delimiter() -> String {
+    ",".to_string()
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum EnvVar {
+    Simple(String),
+    Full(EnvVarConfig),
+}
+
+impl EnvVar {
+    fn into_config(self) -> EnvVarConfig {
+        match self {
+            EnvVar::Simple(name) => EnvVarConfig {
+                name,
+                value_delimiter: default_value_delimiter(),
+                occurrence_delimiter: default_occurrence_delimiter(),
+            },
+            EnvVar::Full(cfg) => cfg,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ArgConfig {
-    env_var: Option<String>,
+    env_var: Option<EnvVar>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -77,7 +113,7 @@ fn main() -> anyhow::Result<()> {
     if cli.add_self_to_env {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(exe_str) = exe.to_str() {
-                env.insert(app_name.to_string(), exe_str.to_string());
+                env.insert("self".to_string(), exe_str.to_string());
             }
         };
     };
@@ -146,23 +182,32 @@ fn create_env_vars(
     let mut mapping = BTreeMap::new();
     for arg in command.get_arguments() {
         let arg_name = arg.get_id().as_str();
-        let Some(raw_arg_value) = args.get_raw(&arg_name) else {
+        let Some(raw_arg_values) = args.get_raw_occurrences(&arg_name) else {
             continue;
         };
 
-        let arg_value = raw_arg_value
-            .map(|s| s.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(",");
-
         let arg_config = get_arg_config(config, arg_name);
 
-        let env_var_name = arg_config
+        let env_var_config = arg_config
             .env_var
             .clone()
-            .unwrap_or_else(|| to_env_var_name(arg_name));
+            .unwrap_or_else(|| {
+                let env_var_name = to_env_var_name(arg_name);
+                EnvVar::Simple(env_var_name)
+            })
+            .into_config();
 
-        mapping.insert(env_var_name, arg_value);
+        let arg_value = raw_arg_values
+            .map(|occurence| {
+                occurence
+                    .map(|value| value.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(&env_var_config.value_delimiter)
+            })
+            .collect::<Vec<_>>()
+            .join(&env_var_config.occurrence_delimiter);
+
+        mapping.insert(env_var_config.name, arg_value);
     }
     mapping
 }
